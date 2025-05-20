@@ -447,8 +447,8 @@ def main() -> None:
         logger.error("Переменная окружения TELEGRAM_BOT_TOKEN не установлена!")
         return
     
-    # Создание приложения
-    application = Application.builder().token(token).build()
+    # Создание приложения с drop_pending_updates=True для предотвращения конфликтов
+    application = Application.builder().token(token).drop_pending_updates(True).build()
     
     # Добавление обработчиков
     application.add_handler(CommandHandler("start", start))
@@ -468,7 +468,8 @@ def main() -> None:
     # Обработка нажатий на кнопки
     application.add_handler(CallbackQueryHandler(button_callback))
     
-    # Запуск бота
+    # Запуск бота с использованием polling
+    logger.info("Запуск бота с использованием polling и drop_pending_updates=True")
     application.run_polling()
 
 if __name__ == "__main__":
