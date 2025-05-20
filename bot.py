@@ -247,14 +247,19 @@ async def handle_webapp_data(update: Update, context: ContextTypes.DEFAULT_TYPE)
     # Проверяем наличие web_app_data
     if update.message and update.message.web_app_data:
         data = update.message.web_app_data.data
+        logger.info(f"Получены данные из Mini App: {data}")
         
-        # Проверяем, начинается ли данные с "/"
+        # Проверяем, является ли данные командой (должны начинаться с '/')
         if data.startswith('/'):
             command = data[1:]  # Удаляем символ "/"
             
             # Проверяем, соответствует ли команда известным типам ассистентов
             if command in ASSISTANT_TYPES:
-                await update.message.reply_text(f"Запускаю ассистента '{ASSISTANT_NAMES[command]}'...")
+                # Симулируем создание объекта сообщения с текстом команды
+                # для передачи в существующие обработчики команд
+                context.args = []  # Аргументы пусты
+                
+                await update.message.reply_text(f"✨ Запускаю ассистента '{ASSISTANT_NAMES[command]}'...")
                 
                 # Запускаем соответствующий обработчик
                 if command == "market":
@@ -265,11 +270,10 @@ async def handle_webapp_data(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     await business_model(update, context)
                 elif command == "adapter":
                     await case_adapter(update, context)
-                return
             else:
-                await update.message.reply_text(f"Неизвестный тип ассистента: {command}")
+                await update.message.reply_text(f"⚠️ Неизвестный тип ассистента: {command}")
         else:
-            await update.message.reply_text("Получены данные из Mini App, но команда не распознана.")
+            await update.message.reply_text("⚠️ Получены данные из Mini App, но команда не распознана.")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Обработка входящих сообщений от пользователя."""
