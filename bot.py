@@ -447,8 +447,8 @@ def main() -> None:
         logger.error("Переменная окружения TELEGRAM_BOT_TOKEN не установлена!")
         return
     
-    # Создание приложения с drop_pending_updates=True для предотвращения конфликтов
-    application = Application.builder().token(token).drop_pending_updates(True).build()
+    # Создание приложения без drop_pending_updates
+    application = Application.builder().token(token).build()
     
     # Добавление обработчиков
     application.add_handler(CommandHandler("start", start))
@@ -468,9 +468,16 @@ def main() -> None:
     # Обработка нажатий на кнопки
     application.add_handler(CallbackQueryHandler(button_callback))
     
-    # Запуск бота с использованием polling
-    logger.info("Запуск бота с использованием polling и drop_pending_updates=True")
-    application.run_polling()
+    # Запуск бота
+    logger.info("Запуск бота")
+    
+    try:
+        # Пробуем использовать run_polling с drop_pending_updates, если доступно
+        application.run_polling(drop_pending_updates=True)
+    except TypeError:
+        # Если drop_pending_updates недоступен, используем обычный run_polling
+        logger.info("Параметр drop_pending_updates недоступен, запуск стандартного polling")
+        application.run_polling()
 
 if __name__ == "__main__":
     main()
