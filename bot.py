@@ -5,7 +5,7 @@ import textwrap
 from typing import Dict, Any, Tuple
 
 from dotenv import load_dotenv
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 from openai import OpenAI
 
@@ -23,6 +23,9 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # Максимальная длина сообщения Telegram
 MAX_MESSAGE_LENGTH = 4096
+
+# URL Mini App для выбора ассистента (замените на URL вашего мини-приложения)
+MINI_APP_URL = "https://ai4business-ai.github.io/front-bot-repo/"
 
 # Хранение активных разговоров: user_id -> (assistant_id, thread_id)
 active_threads: Dict[int, Tuple[str, str]] = {}
@@ -105,7 +108,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/help - Показать это сообщение снова\n\n"
         "Выберите нужного ассистента и начните общение!"
     )
-    await update.message.reply_text(help_text)
+    
+    # Добавляем кнопку для запуска Mini App
+    keyboard = [
+        [InlineKeyboardButton(
+            "🎮 Выбрать ассистента через Mini App", 
+            web_app=WebAppInfo(url=f"{MINI_APP_URL}?bot={context.bot.username}")
+        )]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(help_text, reply_markup=reply_markup)
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Отправка справочного сообщения по команде /help."""
@@ -123,7 +136,17 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         f"• /business - {ASSISTANT_DESCRIPTIONS['business']}\n"
         f"• /adapter - {ASSISTANT_DESCRIPTIONS['adapter']}"
     )
-    await update.message.reply_text(help_text)
+    
+    # Добавляем кнопку для запуска Mini App
+    keyboard = [
+        [InlineKeyboardButton(
+            "🎮 Выбрать ассистента через Mini App", 
+            web_app=WebAppInfo(url=f"{MINI_APP_URL}?bot={context.bot.username}")
+        )]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(help_text, reply_markup=reply_markup)
 
 async def start_chat_with_type(update: Update, context: ContextTypes.DEFAULT_TYPE, assistant_type: str) -> None:
     """Начало нового разговора с ассистентом указанного типа."""
@@ -188,14 +211,65 @@ async def end_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         # Удаление из активных разговоров
         del active_threads[user_id]
         
+        # Добавляем кнопку для запуска Mini App
+        keyboard = [
+            [InlineKeyboardButton(
+                "🎮 Выбрать другого ассистента", 
+                web_app=WebAppInfo(url=f"{MINI_APP_URL}?bot={context.bot.username}")
+            )]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
         await update.message.reply_text(
-            "👋 Чат завершен. Используйте /market, /founder, /business или /adapter чтобы начать новый разговор."
+            "👋 Чат завершен. Используйте /market, /founder, /business или /adapter чтобы начать новый разговор.",
+            reply_markup=reply_markup
         )
         logger.info(f"Завершен чат для пользователя {user_id}")
     else:
+        # Добавляем кнопку для запуска Mini App
+        keyboard = [
+            [InlineKeyboardButton(
+                "🎮 Выбрать ассистента", 
+                web_app=WebAppInfo(url=f"{MINI_APP_URL}?bot={context.bot.username}")
+            )]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
         await update.message.reply_text(
-            "У вас нет активного разговора. Используйте /market, /founder, /business или /adapter чтобы начать."
+            "У вас нет активного разговора. Используйте /market, /founder, /business или /adapter чтобы начать.",
+            reply_markup=reply_markup
         )
+
+async def handle_webapp_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обработка данных из Mini App."""
+    user_id = update.effective_user.id
+    
+    # Проверяем наличие web_app_data
+    if update.message and update.message.web_app_data:
+        data = update.message.web_app_data.data
+        
+        # Проверяем, начинается ли данные с "/"
+        if data.startswith('/'):
+            command = data[1:]  # Удаляем символ "/"
+            
+            # Проверяем, соответствует ли команда известным типам ассистентов
+            if command in ASSISTANT_TYPES:
+                await update.message.reply_text(f"Запускаю ассистента '{ASSISTANT_NAMES[command]}'...")
+                
+                # Запускаем соответствующий обработчик
+                if command == "market":
+                    await market_analysis(update, context)
+                elif command == "founder":
+                    await founder_ideas(update, context)
+                elif command == "business":
+                    await business_model(update, context)
+                elif command == "adapter":
+                    await case_adapter(update, context)
+                return
+            else:
+                await update.message.reply_text(f"Неизвестный тип ассистента: {command}")
+        else:
+            await update.message.reply_text("Получены данные из Mini App, но команда не распознана.")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Обработка входящих сообщений от пользователя."""
@@ -211,6 +285,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             [
                 InlineKeyboardButton(ASSISTANT_NAMES["business"], callback_data="start_business"),
                 InlineKeyboardButton(ASSISTANT_NAMES["adapter"], callback_data="start_adapter")
+            ],
+            [
+                InlineKeyboardButton(
+                    "🎮 Выбрать через Mini App", 
+                    web_app=WebAppInfo(url=f"{MINI_APP_URL}?bot={context.bot.username}")
+                )
             ]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
@@ -374,7 +454,14 @@ def main() -> None:
     application.add_handler(CommandHandler("business", business_model))
     application.add_handler(CommandHandler("adapter", case_adapter))
     application.add_handler(CommandHandler("end", end_chat))
+    
+    # Добавляем обработчик для данных из Mini App
+    application.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_webapp_data))
+    
+    # Обработка текстовых сообщений
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    
+    # Обработка нажатий на кнопки
     application.add_handler(CallbackQueryHandler(button_callback))
     
     # Запуск бота
