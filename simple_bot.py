@@ -3,6 +3,9 @@ import logging
 import asyncio
 import textwrap
 from typing import Dict, Any, Tuple
+from threading import Thread
+import time
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo, ReplyKeyboardMarkup, KeyboardButton
@@ -60,7 +63,7 @@ def get_main_keyboard():
         [KeyboardButton("🎮 Выбрать ассистента", web_app=WebAppInfo(url=MINI_APP_URL))],
         [KeyboardButton("🛑 Остановить обсуждение")]
     ]
-    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, persistent=True)
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 def get_assistant_selection_keyboard():
     """Создание inline клавиатуры для выбора ассистента."""
@@ -370,6 +373,24 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         if assistant_type in ASSISTANTS:
             await start_chat_with_type(update, context, assistant_type)
 
+# Простой HTTP сервер для health check на Render.com
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/html')
+        self.end_headers()
+        self.wfile.write(b'Bot is running!')
+    
+    def log_message(self, format, *args):
+        # Отключаем логирование HTTP запросов
+        pass
+
+def run_health_server(port):
+    """Запуск простого HTTP сервера для health check."""
+    server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
+    logger.info(f"Health check server запущен на порту {port}")
+    server.serve_forever()
+
 def main() -> None:
     """Запуск бота."""
     # Получение токена Telegram из переменной окружения
@@ -405,13 +426,33 @@ def main() -> None:
     # Запуск бота
     logger.info("Запуск бота")
     
-    try:
-        # Пробуем использовать run_polling с drop_pending_updates, если доступно
-        application.run_polling(drop_pending_updates=True)
-    except TypeError:
-        # Если drop_pending_updates недоступен, используем обычный run_polling
-        logger.info("Параметр drop_pending_updates недоступен, запуск стандартного polling")
-        application.run_polling()
+    # Проверяем, работаем ли мы на Render.com (есть ли PORT переменная)
+    port = os.environ.get("PORT")
+    if port:
+        # Запускаем health check сервер в отдельном потоке для Render.com
+        health_thread = Thread(target=run_health_server, args=(int(port),), daemon=True)
+        health_thread.start()
+        logger.info(f"Health check сервер запущен на порту {port}")
+        
+        # Запускаем бота в polling режиме, но с health check сервером
+        logger.info("Запуск в polling режиме с health check сервером")
+        try:
+            application.run_polling(drop_pending_updates=True)
+        except Exception as e:
+            logger.error(f"Ошибка при запуске polling: {e}")
+            # Fallback без drop_pending_updates
+            logger.info("Пытаемся запустить без drop_pending_updates")
+            application.run_polling()
+    else:
+        # Polling режим для локальной разработки
+        logger.info("Запуск в polling режиме")
+        try:
+            application.run_polling(drop_pending_updates=True)
+        except Exception as e:
+            logger.error(f"Ошибка при запуске polling: {e}")
+            # Fallback без drop_pending_updates
+            logger.info("Пытаемся запустить без drop_pending_updates")
+            application.run_polling()
 
 if __name__ == "__main__":
     main()
