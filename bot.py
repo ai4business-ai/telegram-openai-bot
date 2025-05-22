@@ -3,10 +3,11 @@ import logging
 import asyncio
 import textwrap
 from typing import Dict, Any, Tuple
+import uuid
 
 from dotenv import load_dotenv
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
-from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo, InlineQueryResultArticle, InputTextMessageContent, InlineQueryResultsButton
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters, InlineQueryHandler
 from openai import OpenAI
 
 # Загрузка переменных окружения
@@ -27,8 +28,8 @@ MAX_MESSAGE_LENGTH = 4096
 # URL Mini App для выбора ассистента (замените на URL вашего мини-приложения)
 MINI_APP_URL = "https://ai4business-ai.github.io/front-bot-repo/"
 
-# Хранение активных разговоров: user_id -> (assistant_id, thread_id)
-active_threads: Dict[int, Tuple[str, str]] = {}
+# Хранение активных разговоров: user_id -> (assistant_id, thread_id, assistant_type)
+active_threads: Dict[int, Tuple[str, str, str]] = {}
 
 # Типы ассистентов и их команды
 ASSISTANT_TYPES = {
@@ -48,18 +49,18 @@ ASSISTANTS = {
 
 # Названия ассистентов
 ASSISTANT_NAMES = {
-    "market": "Анализ рынка и конкурентный анализ",
-    "founder": "Обсуждение идей фаундера",
-    "business": "Составление бизнес-модели",
-    "adapter": "Адаптатор идей из кейсов"
+    "market": "📊 Анализ рынка",
+    "founder": "💡 Идеи фаундера",
+    "business": "📝 Бизнес-модель",
+    "adapter": "🔄 Адаптатор идей"
 }
 
 # Описания ассистентов
 ASSISTANT_DESCRIPTIONS = {
-    "market": "помогает проанализировать рынок, конкурентов и найти ниши для развития",
-    "founder": "помогает обсудить и проработать идеи основателя бизнеса",
-    "business": "помогает составить и проанализировать бизнес-модель",
-    "adapter": "помогает адаптировать успешные идеи из различных кейсов для вашего бизнеса"
+    "market": "Помогает проанализировать рынок, конкурентов и найти ниши для развития",
+    "founder": "Помогает обсудить и проработать идеи основателя бизнеса",
+    "business": "Помогает составить и проанализировать бизнес-модель",
+    "adapter": "Помогает адаптировать успешные идеи из различных кейсов для вашего бизнеса"
 }
 
 # Инструкции для ассистентов
@@ -99,54 +100,92 @@ for assistant_type, assistant_id in ASSISTANTS.items():
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Отправка приветственного сообщения по команде /start."""
     help_text = (
-        "👋 Привет! Я бот с несколькими AI ассистентами. Используйте одну из следующих команд:\n\n"
-        f"/market - {ASSISTANT_NAMES['market']}\n"
-        f"/founder - {ASSISTANT_NAMES['founder']}\n"
-        f"/business - {ASSISTANT_NAMES['business']}\n"
-        f"/adapter - {ASSISTANT_NAMES['adapter']}\n"
-        "/end - Завершить текущий разговор\n"
-        "/help - Показать это сообщение снова\n\n"
-        "Выберите нужного ассистента и начните общение!"
+        "👋 Привет! Я бот с несколькими AI ассистентами.\n\n"
+        "🔧 **Как использовать:**\n"
+        "1. Напишите `@" + context.bot.username + "` в любом чате\n"
+        "2. Выберите ассистента в мини-приложении\n"
+        "3. Начните общение с выбранным ассистентом\n\n"
+        "📱 **Доступные ассистенты:**\n"
+        f"• {ASSISTANT_NAMES['market']} - {ASSISTANT_DESCRIPTIONS['market']}\n"
+        f"• {ASSISTANT_NAMES['founder']} - {ASSISTANT_DESCRIPTIONS['founder']}\n"
+        f"• {ASSISTANT_NAMES['business']} - {ASSISTANT_DESCRIPTIONS['business']}\n"
+        f"• {ASSISTANT_NAMES['adapter']} - {ASSISTANT_DESCRIPTIONS['adapter']}\n\n"
+        "ℹ️ Используйте /end для завершения текущего разговора\n"
+        "❓ Используйте /help для справки"
     )
     
-    # Добавляем кнопку для запуска Mini App
-    keyboard = [
-        [InlineKeyboardButton(
-            "🎮 Выбрать ассистента через Mini App", 
-            web_app=WebAppInfo(url=f"{MINI_APP_URL}?bot={context.bot.username}")
-        )]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await update.message.reply_text(help_text, reply_markup=reply_markup)
+    await update.message.reply_text(help_text)
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Отправка справочного сообщения по команде /help."""
     help_text = (
-        "Вы можете использовать следующие команды:\n\n"
-        f"/market - {ASSISTANT_NAMES['market']}\n"
-        f"/founder - {ASSISTANT_NAMES['founder']}\n"
-        f"/business - {ASSISTANT_NAMES['business']}\n"
-        f"/adapter - {ASSISTANT_NAMES['adapter']}\n"
+        "📋 **Справка по использованию бота**\n\n"
+        "🔧 **Основной способ использования:**\n"
+        f"Напишите `@{context.bot.username}` в любом чате, затем выберите ассистента\n\n"
+        "📱 **Доступные ассистенты:**\n"
+        f"• {ASSISTANT_NAMES['market']} - {ASSISTANT_DESCRIPTIONS['market']}\n"
+        f"• {ASSISTANT_NAMES['founder']} - {ASSISTANT_DESCRIPTIONS['founder']}\n"
+        f"• {ASSISTANT_NAMES['business']} - {ASSISTANT_DESCRIPTIONS['business']}\n"
+        f"• {ASSISTANT_NAMES['adapter']} - {ASSISTANT_DESCRIPTIONS['adapter']}\n\n"
+        "⚙️ **Команды:**\n"
+        "/start - Начать работу с ботом\n"
+        "/help - Показать эту справку\n"
         "/end - Завершить текущий разговор\n"
-        "/help - Показать это справочное сообщение\n\n"
-        "Описание ассистентов:\n"
-        f"• /market - {ASSISTANT_DESCRIPTIONS['market']}\n"
-        f"• /founder - {ASSISTANT_DESCRIPTIONS['founder']}\n"
-        f"• /business - {ASSISTANT_DESCRIPTIONS['business']}\n"
-        f"• /adapter - {ASSISTANT_DESCRIPTIONS['adapter']}"
+        "/status - Узнать, какой ассистент активен\n\n"
+        "💡 **Совет:** После выбора ассистента просто пишите свои вопросы, и он ответит!"
     )
     
-    # Добавляем кнопку для запуска Mini App
-    keyboard = [
-        [InlineKeyboardButton(
-            "🎮 Выбрать ассистента через Mini App", 
-            web_app=WebAppInfo(url=f"{MINI_APP_URL}?bot={context.bot.username}")
-        )]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text(help_text)
+
+async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Показать статус текущего активного ассистента."""
+    user_id = update.effective_user.id
     
-    await update.message.reply_text(help_text, reply_markup=reply_markup)
+    if user_id in active_threads:
+        _, _, assistant_type = active_threads[user_id]
+        assistant_name = ASSISTANT_NAMES[assistant_type]
+        await update.message.reply_text(
+            f"🤖 **Активный ассистент:** {assistant_name}\n\n"
+            f"📝 **Описание:** {ASSISTANT_DESCRIPTIONS[assistant_type]}\n\n"
+            "💬 Можете продолжать задавать вопросы или использовать /end для завершения разговора."
+        )
+    else:
+        await update.message.reply_text(
+            "❌ У вас нет активного разговора с ассистентом.\n\n"
+            f"Для выбора ассистента напишите `@{context.bot.username}` в любом чате."
+        )
+
+async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обработка inline запросов."""
+    query = update.inline_query.query.lower()
+    
+    # Создаем результаты для каждого ассистента
+    results = []
+    
+    for assistant_type, assistant_name in ASSISTANT_NAMES.items():
+        # Фильтруем результаты по запросу, если он есть
+        if not query or query in assistant_name.lower() or query in ASSISTANT_DESCRIPTIONS[assistant_type].lower():
+            result = InlineQueryResultArticle(
+                id=str(uuid.uuid4()),
+                title=assistant_name,
+                description=ASSISTANT_DESCRIPTIONS[assistant_type],
+                input_message_content=InputTextMessageContent(
+                    message_text=f"🤖 Запускаю ассистента: {assistant_name}\n\nОтправьте мне ваш вопрос, и я отвечу!"
+                ),
+                # Добавляем данные для обработки выбора
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("💬 Начать общение", callback_data=f"start_{assistant_type}")]
+                ])
+            )
+            results.append(result)
+    
+    # Добавляем кнопку для открытия Mini App
+    button = InlineQueryResultsButton(
+        text="🎮 Выбрать через Mini App",
+        web_app=WebAppInfo(url=f"{MINI_APP_URL}?mode=inline")
+    )
+    
+    await update.inline_query.answer(results, button=button, cache_time=1)
 
 async def start_chat_with_type(update: Update, context: ContextTypes.DEFAULT_TYPE, assistant_type: str) -> None:
     """Начало нового разговора с ассистентом указанного типа."""
@@ -154,9 +193,8 @@ async def start_chat_with_type(update: Update, context: ContextTypes.DEFAULT_TYP
     
     # Завершение существующего чата, если есть
     if user_id in active_threads:
-        # Удаление предыдущего потока
         try:
-            _, thread_id = active_threads[user_id]
+            _, thread_id, _ = active_threads[user_id]
             client.beta.threads.delete(thread_id)
         except Exception as e:
             logger.error(f"Ошибка при удалении потока: {e}")
@@ -165,42 +203,29 @@ async def start_chat_with_type(update: Update, context: ContextTypes.DEFAULT_TYP
     
     if not assistant_id:
         await update.message.reply_text(
-            f"Извините, ассистент '{ASSISTANT_NAMES[assistant_type]}' недоступен в данный момент. Попробуйте другого ассистента."
+            f"❌ Извините, ассистент '{ASSISTANT_NAMES[assistant_type]}' недоступен в данный момент."
         )
         return
     
     # Создание нового потока
     thread = client.beta.threads.create()
-    active_threads[user_id] = (assistant_id, thread.id)
+    active_threads[user_id] = (assistant_id, thread.id, assistant_type)
     
     await update.message.reply_text(
-        f"🤖 Запущен ассистент '{ASSISTANT_NAMES[assistant_type]}'. Отправьте мне сообщение, и я отвечу. Используйте /end когда закончите."
+        f"✅ Запущен ассистент: **{ASSISTANT_NAMES[assistant_type]}**\n\n"
+        f"📝 {ASSISTANT_DESCRIPTIONS[assistant_type]}\n\n"
+        "💬 Отправьте мне ваш вопрос, и я отвечу!\n"
+        "⚙️ Используйте /end для завершения разговора"
     )
     
     logger.info(f"Начат новый чат для пользователя {user_id} с ассистентом '{ASSISTANT_NAMES[assistant_type]}' (ID: {assistant_id}) в потоке {thread.id}")
-
-async def market_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Запуск ассистента по анализу рынка."""
-    await start_chat_with_type(update, context, "market")
-
-async def founder_ideas(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Запуск ассистента для обсуждения идей фаундера."""
-    await start_chat_with_type(update, context, "founder")
-
-async def business_model(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Запуск ассистента для составления бизнес-модели."""
-    await start_chat_with_type(update, context, "business")
-
-async def case_adapter(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Запуск ассистента для адаптации идей из кейсов."""
-    await start_chat_with_type(update, context, "adapter")
 
 async def end_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Завершение текущего разговора с ассистентом."""
     user_id = update.effective_user.id
     
     if user_id in active_threads:
-        _, thread_id = active_threads[user_id]
+        _, thread_id, assistant_type = active_threads[user_id]
         
         # Удаление потока
         try:
@@ -211,69 +236,16 @@ async def end_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         # Удаление из активных разговоров
         del active_threads[user_id]
         
-        # Добавляем кнопку для запуска Mini App
-        keyboard = [
-            [InlineKeyboardButton(
-                "🎮 Выбрать другого ассистента", 
-                web_app=WebAppInfo(url=f"{MINI_APP_URL}?bot={context.bot.username}")
-            )]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
         await update.message.reply_text(
-            "👋 Чат завершен. Используйте /market, /founder, /business или /adapter чтобы начать новый разговор.",
-            reply_markup=reply_markup
+            f"👋 Разговор с ассистентом **{ASSISTANT_NAMES[assistant_type]}** завершен.\n\n"
+            f"Для выбора нового ассистента напишите `@{context.bot.username}` в любом чате."
         )
         logger.info(f"Завершен чат для пользователя {user_id}")
     else:
-        # Добавляем кнопку для запуска Mini App
-        keyboard = [
-            [InlineKeyboardButton(
-                "🎮 Выбрать ассистента", 
-                web_app=WebAppInfo(url=f"{MINI_APP_URL}?bot={context.bot.username}")
-            )]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
         await update.message.reply_text(
-            "У вас нет активного разговора. Используйте /market, /founder, /business или /adapter чтобы начать.",
-            reply_markup=reply_markup
+            "❌ У вас нет активного разговора.\n\n"
+            f"Для выбора ассистента напишите `@{context.bot.username}` в любом чате."
         )
-
-async def handle_webapp_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Обработка данных из Mini App."""
-    user_id = update.effective_user.id
-    
-    # Проверяем наличие web_app_data
-    if update.message and update.message.web_app_data:
-        data = update.message.web_app_data.data
-        logger.info(f"Получены данные из Mini App: {data}")
-        
-        # Проверяем, является ли данные командой (должны начинаться с '/')
-        if data.startswith('/'):
-            command = data[1:]  # Удаляем символ "/"
-            
-            # Проверяем, соответствует ли команда известным типам ассистентов
-            if command in ASSISTANT_TYPES:
-                # Симулируем создание объекта сообщения с текстом команды
-                # для передачи в существующие обработчики команд
-                context.args = []  # Аргументы пусты
-                
-                await update.message.reply_text(f"✨ Запускаю ассистента '{ASSISTANT_NAMES[command]}'...")
-                
-                # Запускаем соответствующий обработчик
-                if command == "market":
-                    await market_analysis(update, context)
-                elif command == "founder":
-                    await founder_ideas(update, context)
-                elif command == "business":
-                    await business_model(update, context)
-                elif command == "adapter":
-                    await case_adapter(update, context)
-            else:
-                await update.message.reply_text(f"⚠️ Неизвестный тип ассистента: {command}")
-        else:
-            await update.message.reply_text("⚠️ Получены данные из Mini App, но команда не распознана.")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Обработка входящих сообщений от пользователя."""
@@ -281,33 +253,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     
     # Проверка наличия активного разговора
     if user_id not in active_threads:
-        keyboard = [
-            [
-                InlineKeyboardButton(ASSISTANT_NAMES["market"], callback_data="start_market"),
-                InlineKeyboardButton(ASSISTANT_NAMES["founder"], callback_data="start_founder")
-            ],
-            [
-                InlineKeyboardButton(ASSISTANT_NAMES["business"], callback_data="start_business"),
-                InlineKeyboardButton(ASSISTANT_NAMES["adapter"], callback_data="start_adapter")
-            ],
-            [
-                InlineKeyboardButton(
-                    "🎮 Выбрать через Mini App", 
-                    web_app=WebAppInfo(url=f"{MINI_APP_URL}?bot={context.bot.username}")
-                )
-            ]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
         await update.message.reply_text(
-            "У вас нет активного разговора. Выберите тип ассистента, чтобы начать новый разговор:",
-            reply_markup=reply_markup
+            "❌ У вас нет активного разговора с ассистентом.\n\n"
+            f"Для выбора ассистента напишите `@{context.bot.username}` в любом чате и выберите нужного ассистента."
         )
         return
     
     # Получение сообщения пользователя
     user_message = update.message.text
-    assistant_id, thread_id = active_threads[user_id]
+    assistant_id, thread_id, assistant_type = active_threads[user_id]
     
     # Отправка действия "набирает текст"
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
@@ -336,12 +290,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
                 await update.message.reply_text(message_chunk)
         else:
-            await update.message.reply_text("Не удалось сформировать ответ. Пожалуйста, попробуйте снова.")
+            await update.message.reply_text("❌ Не удалось сформировать ответ. Пожалуйста, попробуйте снова.")
             
     except Exception as e:
         logger.error(f"Ошибка в разговоре: {e}")
         await update.message.reply_text(
-            "Извините, возникла ошибка при обработке вашего запроса. Пожалуйста, попробуйте еще раз или начните новый разговор."
+            "❌ Извините, возникла ошибка при обработке вашего запроса. Пожалуйста, попробуйте еще раз или начните новый разговор."
         )
 
 def split_response(response: str) -> list:
@@ -426,18 +380,15 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     query = update.callback_query
     await query.answer()
     
-    if query.data == "start_market":
-        await query.edit_message_text(text=f"Запускаю ассистента '{ASSISTANT_NAMES['market']}'...")
-        await market_analysis(update, context)
-    elif query.data == "start_founder":
-        await query.edit_message_text(text=f"Запускаю ассистента '{ASSISTANT_NAMES['founder']}'...")
-        await founder_ideas(update, context)
-    elif query.data == "start_business":
-        await query.edit_message_text(text=f"Запускаю ассистента '{ASSISTANT_NAMES['business']}'...")
-        await business_model(update, context)
-    elif query.data == "start_adapter":
-        await query.edit_message_text(text=f"Запускаю ассистента '{ASSISTANT_NAMES['adapter']}'...")
-        await case_adapter(update, context)
+    # Извлекаем тип ассистента из callback_data
+    if query.data.startswith("start_"):
+        assistant_type = query.data[6:]  # Убираем "start_"
+        
+        if assistant_type in ASSISTANT_TYPES:
+            await query.edit_message_text(
+                text=f"🤖 Запускаю ассистента: {ASSISTANT_NAMES[assistant_type]}..."
+            )
+            await start_chat_with_type(update, context, assistant_type)
 
 def main() -> None:
     """Запуск бота."""
@@ -447,20 +398,17 @@ def main() -> None:
         logger.error("Переменная окружения TELEGRAM_BOT_TOKEN не установлена!")
         return
     
-    # Создание приложения без drop_pending_updates
+    # Создание приложения
     application = Application.builder().token(token).build()
     
     # Добавление обработчиков
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(CommandHandler("market", market_analysis))
-    application.add_handler(CommandHandler("founder", founder_ideas))
-    application.add_handler(CommandHandler("business", business_model))
-    application.add_handler(CommandHandler("adapter", case_adapter))
+    application.add_handler(CommandHandler("status", status_command))
     application.add_handler(CommandHandler("end", end_chat))
     
-    # Добавляем обработчик для данных из Mini App
-    application.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_webapp_data))
+    # Добавляем обработчик inline запросов
+    application.add_handler(InlineQueryHandler(inline_query))
     
     # Обработка текстовых сообщений
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
