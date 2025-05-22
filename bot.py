@@ -3,11 +3,10 @@ import logging
 import asyncio
 import textwrap
 from typing import Dict, Any, Tuple
-import uuid
 
 from dotenv import load_dotenv
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo, InlineQueryResultArticle, InputTextMessageContent, InlineQueryResultsButton
-from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters, InlineQueryHandler
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo, ReplyKeyboardMarkup, KeyboardButton
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 from openai import OpenAI
 
 # Загрузка переменных окружения
@@ -25,21 +24,13 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 # Максимальная длина сообщения Telegram
 MAX_MESSAGE_LENGTH = 4096
 
-# URL Mini App для выбора ассистента (замените на URL вашего мини-приложения)
+# URL Mini App для выбора ассистента
 MINI_APP_URL = "https://ai4business-ai.github.io/front-bot-repo/"
 
 # Хранение активных разговоров: user_id -> (assistant_id, thread_id, assistant_type)
 active_threads: Dict[int, Tuple[str, str, str]] = {}
 
-# Типы ассистентов и их команды
-ASSISTANT_TYPES = {
-    "market": "market",     # Анализ рынка и конкурентный анализ
-    "founder": "founder",   # Обсуждение идей фаундера
-    "business": "business", # Составление бизнес-модели
-    "adapter": "adapter"    # Адаптатор идей из кейсов
-}
-
-# Получение ID ассистентов из переменных окружения или создание новых
+# ID ассистентов из переменных окружения
 ASSISTANTS = {
     "market": os.getenv("OPENAI_ASSISTANT_ID_MARKET"),
     "founder": os.getenv("OPENAI_ASSISTANT_ID_FOUNDER"),
@@ -63,65 +54,47 @@ ASSISTANT_DESCRIPTIONS = {
     "adapter": "Помогает адаптировать успешные идеи из различных кейсов для вашего бизнеса"
 }
 
-# Инструкции для ассистентов
-ASSISTANT_INSTRUCTIONS = {
-    "market": "Вы — специалист по анализу рынка и конкурентов. Помогайте пользователям анализировать рыночные ниши, изучать конкурентов, выявлять тренды и находить возможности для развития. Давайте структурированные ответы с конкретными рекомендациями на основе информации, предоставленной пользователем.",
-    
-    "founder": "Вы — опытный консультант для основателей бизнеса. Помогайте фаундерам обсуждать, анализировать и улучшать их бизнес-идеи. Задавайте уточняющие вопросы, предлагайте альтернативные подходы и помогайте выявить сильные и слабые стороны концепций. Ваша цель — помочь превратить идеи в жизнеспособные бизнес-проекты.",
-    
-    "business": "Вы — эксперт по бизнес-моделированию. Помогайте пользователям составлять структурированные бизнес-модели, определять источники доходов, структуру расходов, ценностные предложения и другие ключевые элементы. Работайте в формате Canvas и других методологий по запросу. Давайте практические советы по улучшению бизнес-модели для достижения устойчивого роста.",
-    
-    "adapter": "Вы — эксперт по бизнес-кейсам. Помогайте пользователям адаптировать успешные идеи и стратегии из известных бизнес-кейсов для их конкретных проектов. Анализируйте ключевые факторы успеха в разных кейсах и предлагайте, как их можно применить в других контекстах. Обращайте внимание на особенности отрасли, масштаб бизнеса и уникальные характеристики ситуации пользователя."
-}
+def get_main_keyboard():
+    """Создание основной клавиатуры с кнопками управления."""
+    keyboard = [
+        [KeyboardButton("🎮 Выбрать ассистента", web_app=WebAppInfo(url=MINI_APP_URL))],
+        [KeyboardButton("🛑 Остановить обсуждение")]
+    ]
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, persistent=True)
 
-# Проверка и создание ассистентов, если необходимо
-for assistant_type, assistant_id in ASSISTANTS.items():
-    if not assistant_id:
-        try:
-            assistant = client.beta.assistants.create(
-                name=ASSISTANT_NAMES[assistant_type],
-                instructions=ASSISTANT_INSTRUCTIONS[assistant_type],
-                model="gpt-4-turbo",
-            )
-            ASSISTANTS[assistant_type] = assistant.id
-            logger.info(f"Создан новый ассистент '{ASSISTANT_NAMES[assistant_type]}' с ID: {assistant.id}")
-        except Exception as e:
-            logger.error(f"Ошибка при создании ассистента '{ASSISTANT_NAMES[assistant_type]}': {e}")
-            # Если не удалось создать первый ассистент, используем существующие
-            existing_assistants = [aid for aid in ASSISTANTS.values() if aid]
-            if existing_assistants:
-                ASSISTANTS[assistant_type] = existing_assistants[0]
-                logger.info(f"Используется существующий ассистент для '{ASSISTANT_NAMES[assistant_type]}'")
-            else:
-                logger.error(f"Не удалось создать ассистента '{ASSISTANT_NAMES[assistant_type]}' и нет запасного варианта")
-    else:
-        logger.info(f"Используется существующий ассистент '{ASSISTANT_NAMES[assistant_type]}' с ID: {assistant_id}")
+def get_assistant_selection_keyboard():
+    """Создание inline клавиатуры для выбора ассистента."""
+    keyboard = []
+    for assistant_type, name in ASSISTANT_NAMES.items():
+        keyboard.append([InlineKeyboardButton(name, callback_data=f"select_{assistant_type}")])
+    
+    return InlineKeyboardMarkup(keyboard)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Отправка приветственного сообщения по команде /start."""
     help_text = (
-        "👋 Привет! Я бот с несколькими AI ассистентами.\n\n"
-        "🔧 **Как использовать:**\n"
-        "1. Напишите `@" + context.bot.username + "` в любом чате\n"
-        "2. Выберите ассистента в мини-приложении\n"
+        "👋 Привет! Я бот с бизнес-ассистентами на базе ИИ.\n\n"
+        "🎮 **Как использовать:**\n"
+        "1. Нажмите кнопку \"Выбрать ассистента\" ниже\n"
+        "2. В открывшемся приложении выберите нужного ассистента\n"
         "3. Начните общение с выбранным ассистентом\n\n"
         "📱 **Доступные ассистенты:**\n"
         f"• {ASSISTANT_NAMES['market']} - {ASSISTANT_DESCRIPTIONS['market']}\n"
         f"• {ASSISTANT_NAMES['founder']} - {ASSISTANT_DESCRIPTIONS['founder']}\n"
         f"• {ASSISTANT_NAMES['business']} - {ASSISTANT_DESCRIPTIONS['business']}\n"
         f"• {ASSISTANT_NAMES['adapter']} - {ASSISTANT_DESCRIPTIONS['adapter']}\n\n"
-        "ℹ️ Используйте /end для завершения текущего разговора\n"
+        "🛑 Используйте кнопку \"Остановить обсуждение\" для завершения разговора\n"
         "❓ Используйте /help для справки"
     )
     
-    await update.message.reply_text(help_text)
+    await update.message.reply_text(help_text, reply_markup=get_main_keyboard())
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Отправка справочного сообщения по команде /help."""
     help_text = (
         "📋 **Справка по использованию бота**\n\n"
-        "🔧 **Основной способ использования:**\n"
-        f"Напишите `@{context.bot.username}` в любом чате, затем выберите ассистента\n\n"
+        "🎮 **Основной способ использования:**\n"
+        "Нажмите кнопку \"Выбрать ассистента\" для выбора нужного ассистента\n\n"
         "📱 **Доступные ассистенты:**\n"
         f"• {ASSISTANT_NAMES['market']} - {ASSISTANT_DESCRIPTIONS['market']}\n"
         f"• {ASSISTANT_NAMES['founder']} - {ASSISTANT_DESCRIPTIONS['founder']}\n"
@@ -130,12 +103,14 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "⚙️ **Команды:**\n"
         "/start - Начать работу с ботом\n"
         "/help - Показать эту справку\n"
-        "/end - Завершить текущий разговор\n"
         "/status - Узнать, какой ассистент активен\n\n"
+        "🔘 **Кнопки управления:**\n"
+        "🎮 Выбрать ассистента - открыть приложение выбора\n"
+        "🛑 Остановить обсуждение - завершить текущий разговор\n\n"
         "💡 **Совет:** После выбора ассистента просто пишите свои вопросы, и он ответит!"
     )
     
-    await update.message.reply_text(help_text)
+    await update.message.reply_text(help_text, reply_markup=get_main_keyboard())
 
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Показать статус текущего активного ассистента."""
@@ -147,45 +122,36 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text(
             f"🤖 **Активный ассистент:** {assistant_name}\n\n"
             f"📝 **Описание:** {ASSISTANT_DESCRIPTIONS[assistant_type]}\n\n"
-            "💬 Можете продолжать задавать вопросы или использовать /end для завершения разговора."
+            "💬 Можете продолжать задавать вопросы или выбрать другого ассистента.",
+            reply_markup=get_main_keyboard()
         )
     else:
         await update.message.reply_text(
             "❌ У вас нет активного разговора с ассистентом.\n\n"
-            f"Для выбора ассистента напишите `@{context.bot.username}` в любом чате."
+            "Нажмите кнопку \"Выбрать ассистента\" для начала.",
+            reply_markup=get_main_keyboard()
         )
 
-async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Обработка inline запросов."""
-    query = update.inline_query.query.lower()
-    
-    # Создаем результаты для каждого ассистента
-    results = []
-    
-    for assistant_type, assistant_name in ASSISTANT_NAMES.items():
-        # Фильтруем результаты по запросу, если он есть
-        if not query or query in assistant_name.lower() or query in ASSISTANT_DESCRIPTIONS[assistant_type].lower():
-            result = InlineQueryResultArticle(
-                id=str(uuid.uuid4()),
-                title=assistant_name,
-                description=ASSISTANT_DESCRIPTIONS[assistant_type],
-                input_message_content=InputTextMessageContent(
-                    message_text=f"🤖 Запускаю ассистента: {assistant_name}\n\nОтправьте мне ваш вопрос, и я отвечу!"
-                ),
-                # Добавляем данные для обработки выбора
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("💬 Начать общение", callback_data=f"start_{assistant_type}")]
-                ])
-            )
-            results.append(result)
-    
-    # Добавляем кнопку для открытия Mini App
-    button = InlineQueryResultsButton(
-        text="🎮 Выбрать через Mini App",
-        web_app=WebAppInfo(url=f"{MINI_APP_URL}?mode=inline")
+async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обработка данных из Mini App."""
+    # Когда пользователь выбирает ассистента в Mini App, отправляем сообщение с выбором
+    await send_assistant_selection_message(update, context)
+
+async def send_assistant_selection_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Отправка сообщения с выбором ассистента."""
+    message_text = (
+        "🤖 **Выберите ассистента для начала общения:**\n\n"
+        f"📊 **Анализ рынка** - {ASSISTANT_DESCRIPTIONS['market']}\n\n"
+        f"💡 **Идеи фаундера** - {ASSISTANT_DESCRIPTIONS['founder']}\n\n"
+        f"📝 **Бизнес-модель** - {ASSISTANT_DESCRIPTIONS['business']}\n\n"
+        f"🔄 **Адаптатор идей** - {ASSISTANT_DESCRIPTIONS['adapter']}\n\n"
+        "👇 Нажмите на кнопку ниже для выбора:"
     )
     
-    await update.inline_query.answer(results, button=button, cache_time=1)
+    await update.message.reply_text(
+        message_text,
+        reply_markup=get_assistant_selection_keyboard()
+    )
 
 async def start_chat_with_type(update: Update, context: ContextTypes.DEFAULT_TYPE, assistant_type: str) -> None:
     """Начало нового разговора с ассистентом указанного типа."""
@@ -202,8 +168,9 @@ async def start_chat_with_type(update: Update, context: ContextTypes.DEFAULT_TYP
     assistant_id = ASSISTANTS.get(assistant_type)
     
     if not assistant_id:
-        await update.message.reply_text(
-            f"❌ Извините, ассистент '{ASSISTANT_NAMES[assistant_type]}' недоступен в данный момент."
+        await update.callback_query.edit_message_text(
+            f"❌ Извините, ассистент '{ASSISTANT_NAMES[assistant_type]}' недоступен в данный момент.",
+            reply_markup=get_assistant_selection_keyboard()
         )
         return
     
@@ -211,16 +178,17 @@ async def start_chat_with_type(update: Update, context: ContextTypes.DEFAULT_TYP
     thread = client.beta.threads.create()
     active_threads[user_id] = (assistant_id, thread.id, assistant_type)
     
-    await update.message.reply_text(
-        f"✅ Запущен ассистент: **{ASSISTANT_NAMES[assistant_type]}**\n\n"
+    await update.callback_query.edit_message_text(
+        f"✅ **Запущен ассистент: {ASSISTANT_NAMES[assistant_type]}**\n\n"
         f"📝 {ASSISTANT_DESCRIPTIONS[assistant_type]}\n\n"
-        "💬 Отправьте мне ваш вопрос, и я отвечу!\n"
-        "⚙️ Используйте /end для завершения разговора"
+        "💬 Теперь можете отправлять мне свои вопросы, и я отвечу!\n\n"
+        "🔄 Используйте кнопку \"Выбрать ассистента\" для смены ассистента\n"
+        "🛑 Используйте кнопку \"Остановить обсуждение\" для завершения"
     )
     
     logger.info(f"Начат новый чат для пользователя {user_id} с ассистентом '{ASSISTANT_NAMES[assistant_type]}' (ID: {assistant_id}) в потоке {thread.id}")
 
-async def end_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def stop_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Завершение текущего разговора с ассистентом."""
     user_id = update.effective_user.id
     
@@ -238,29 +206,40 @@ async def end_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         
         await update.message.reply_text(
             f"👋 Разговор с ассистентом **{ASSISTANT_NAMES[assistant_type]}** завершен.\n\n"
-            f"Для выбора нового ассистента напишите `@{context.bot.username}` в любом чате."
+            "🎮 Вы всегда можете начать новое общение, нажав кнопку \"Выбрать ассистента\"",
+            reply_markup=get_main_keyboard()
         )
         logger.info(f"Завершен чат для пользователя {user_id}")
     else:
         await update.message.reply_text(
             "❌ У вас нет активного разговора.\n\n"
-            f"Для выбора ассистента напишите `@{context.bot.username}` в любом чате."
+            "🎮 Нажмите кнопку \"Выбрать ассистента\" для начала нового общения.",
+            reply_markup=get_main_keyboard()
         )
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Обработка входящих сообщений от пользователя."""
     user_id = update.effective_user.id
+    message_text = update.message.text
     
-    # Проверка наличия активного разговора
+    # Обработка кнопок клавиатуры
+    if message_text == "🎮 Выбрать ассистента":
+        await send_assistant_selection_message(update, context)
+        return
+    elif message_text == "🛑 Остановить обсуждение":
+        await stop_chat(update, context)
+        return
+    
+    # Проверка наличия активного разговора для обычных сообщений
     if user_id not in active_threads:
         await update.message.reply_text(
             "❌ У вас нет активного разговора с ассистентом.\n\n"
-            f"Для выбора ассистента напишите `@{context.bot.username}` в любом чате и выберите нужного ассистента."
+            "🎮 Нажмите кнопку \"Выбрать ассистента\" для начала общения.",
+            reply_markup=get_main_keyboard()
         )
         return
     
-    # Получение сообщения пользователя
-    user_message = update.message.text
+    # Получение информации об активном ассистенте
     assistant_id, thread_id, assistant_type = active_threads[user_id]
     
     # Отправка действия "набирает текст"
@@ -271,7 +250,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         client.beta.threads.messages.create(
             thread_id=thread_id,
             role="user",
-            content=user_message
+            content=message_text
         )
         
         # Запуск ассистента в потоке
@@ -288,14 +267,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             # Разбиваем длинный ответ на части и отправляем их по очереди
             for message_chunk in split_response(response):
                 await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-                await update.message.reply_text(message_chunk)
+                await update.message.reply_text(message_chunk, reply_markup=get_main_keyboard())
         else:
-            await update.message.reply_text("❌ Не удалось сформировать ответ. Пожалуйста, попробуйте снова.")
+            await update.message.reply_text(
+                "❌ Не удалось сформировать ответ. Пожалуйста, попробуйте снова.",
+                reply_markup=get_main_keyboard()
+            )
             
     except Exception as e:
         logger.error(f"Ошибка в разговоре: {e}")
         await update.message.reply_text(
-            "❌ Извините, возникла ошибка при обработке вашего запроса. Пожалуйста, попробуйте еще раз или начните новый разговор."
+            "❌ Извините, возникла ошибка при обработке вашего запроса. Пожалуйста, попробуйте еще раз.",
+            reply_markup=get_main_keyboard()
         )
 
 def split_response(response: str) -> list:
@@ -376,18 +359,15 @@ async def poll_run(thread_id: str, run_id: str) -> str:
     return "Ответ занимает слишком много времени. Пожалуйста, попробуйте позже."
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Обработка нажатий на кнопки."""
+    """Обработка нажатий на inline кнопки."""
     query = update.callback_query
     await query.answer()
     
     # Извлекаем тип ассистента из callback_data
-    if query.data.startswith("start_"):
-        assistant_type = query.data[6:]  # Убираем "start_"
+    if query.data.startswith("select_"):
+        assistant_type = query.data[7:]  # Убираем "select_"
         
-        if assistant_type in ASSISTANT_TYPES:
-            await query.edit_message_text(
-                text=f"🤖 Запускаю ассистента: {ASSISTANT_NAMES[assistant_type]}..."
-            )
+        if assistant_type in ASSISTANTS:
             await start_chat_with_type(update, context, assistant_type)
 
 def main() -> None:
@@ -398,6 +378,13 @@ def main() -> None:
         logger.error("Переменная окружения TELEGRAM_BOT_TOKEN не установлена!")
         return
     
+    # Проверка наличия ID ассистентов
+    missing_assistants = [name for name, aid in ASSISTANTS.items() if not aid]
+    if missing_assistants:
+        logger.error(f"Не указаны ID для ассистентов: {missing_assistants}")
+        logger.error("Проверьте переменные окружения OPENAI_ASSISTANT_ID_*")
+        return
+    
     # Создание приложения
     application = Application.builder().token(token).build()
     
@@ -405,15 +392,14 @@ def main() -> None:
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("status", status_command))
-    application.add_handler(CommandHandler("end", end_chat))
     
-    # Добавляем обработчик inline запросов
-    application.add_handler(InlineQueryHandler(inline_query))
-    
-    # Обработка текстовых сообщений
+    # Обработка текстовых сообщений (включая кнопки клавиатуры)
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
-    # Обработка нажатий на кнопки
+    # Обработка данных из Web App
+    application.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_web_app_data))
+    
+    # Обработка нажатий на inline кнопки
     application.add_handler(CallbackQueryHandler(button_callback))
     
     # Запуск бота
