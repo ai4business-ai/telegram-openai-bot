@@ -137,11 +137,58 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Обработка данных из Mini App."""
-    # Когда пользователь выбирает ассистента в Mini App, отправляем сообщение с выбором
-    await send_assistant_selection_message(update, context)
+    try:
+        # Получаем данные из Mini App
+        web_app_data = update.message.web_app_data.data
+        import json
+        data = json.loads(web_app_data)
+        
+        # Извлекаем выбранного ассистента
+        selected_assistant = data.get('selected_assistant')
+        
+        if selected_assistant and selected_assistant in ASSISTANTS:
+            # Отправляем сообщение конкретно для выбранного ассистента
+            await send_specific_assistant_message(update, context, selected_assistant)
+        else:
+            # Fallback - показываем общее меню
+            await send_general_assistant_selection_message(update, context)
+            
+    except Exception as e:
+        logger.error(f"Ошибка при обработке данных Web App: {e}")
+        # Fallback - показываем общее меню
+        await send_general_assistant_selection_message(update, context)
 
-async def send_assistant_selection_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Отправка сообщения с выбором ассистента."""
+async def send_specific_assistant_message(update: Update, context: ContextTypes.DEFAULT_TYPE, assistant_type: str) -> None:
+    """Отправка сообщения для конкретного ассистента."""
+    assistant_name = ASSISTANT_NAMES[assistant_type]
+    assistant_description = ASSISTANT_DESCRIPTIONS[assistant_type]
+    
+    # Эмодзи для каждого типа
+    emoji_map = {
+        'market': '📊',
+        'founder': '💡', 
+        'business': '📝',
+        'adapter': '🔄'
+    }
+    
+    message_text = (
+        f"{emoji_map[assistant_type]} **{assistant_name.replace('📊 ', '').replace('💡 ', '').replace('📝 ', '').replace('🔄 ', '')}**\n\n"
+        f"📝 {assistant_description}\n\n"
+        f"💬 Нажмите кнопку ниже, чтобы начать общение с этим ассистентом:"
+    )
+    
+    # Создаем клавиатуру с одной кнопкой для выбранного ассистента
+    keyboard = [[InlineKeyboardButton(f"🚀 Запустить {assistant_name.replace('📊 ', '').replace('💡 ', '').replace('📝 ', '').replace('🔄 ', '')}", callback_data=f"select_{assistant_type}")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(
+        message_text,
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
+
+async def send_general_assistant_selection_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Отправка общего сообщения с выбором ассистента (fallback)."""
     message_text = (
         "🤖 **Выберите ассистента для начала общения:**\n\n"
         f"📊 **Анализ рынка** - {ASSISTANT_DESCRIPTIONS['market']}\n\n"
@@ -153,7 +200,8 @@ async def send_assistant_selection_message(update: Update, context: ContextTypes
     
     await update.message.reply_text(
         message_text,
-        reply_markup=get_assistant_selection_keyboard()
+        reply_markup=get_assistant_selection_keyboard(),
+        parse_mode='Markdown'
     )
 
 async def start_chat_with_type(update: Update, context: ContextTypes.DEFAULT_TYPE, assistant_type: str) -> None:
@@ -182,11 +230,12 @@ async def start_chat_with_type(update: Update, context: ContextTypes.DEFAULT_TYP
     active_threads[user_id] = (assistant_id, thread.id, assistant_type)
     
     await update.callback_query.edit_message_text(
-        f"✅ **Запущен ассистент: {ASSISTANT_NAMES[assistant_type]}**\n\n"
+        f"✅ *Запущен ассистент: {ASSISTANT_NAMES[assistant_type].replace('📊 ', '').replace('💡 ', '').replace('📝 ', '').replace('🔄 ', '')}*\n\n"
         f"📝 {ASSISTANT_DESCRIPTIONS[assistant_type]}\n\n"
         "💬 Теперь можете отправлять мне свои вопросы, и я отвечу!\n\n"
         "🔄 Используйте кнопку \"Выбрать ассистента\" для смены ассистента\n"
-        "🛑 Используйте кнопку \"Остановить обсуждение\" для завершения"
+        "🛑 Используйте кнопку \"Остановить обсуждение\" для завершения",
+        parse_mode='Markdown'
     )
     
     logger.info(f"Начат новый чат для пользователя {user_id} с ассистентом '{ASSISTANT_NAMES[assistant_type]}' (ID: {assistant_id}) в потоке {thread.id}")
@@ -208,9 +257,10 @@ async def stop_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         del active_threads[user_id]
         
         await update.message.reply_text(
-            f"👋 Разговор с ассистентом **{ASSISTANT_NAMES[assistant_type]}** завершен.\n\n"
+            f"👋 Разговор с ассистентом *{ASSISTANT_NAMES[assistant_type].replace('📊 ', '').replace('💡 ', '').replace('📝 ', '').replace('🔄 ', '')}* завершен.\n\n"
             "🎮 Вы всегда можете начать новое общение, нажав кнопку \"Выбрать ассистента\"",
-            reply_markup=get_main_keyboard()
+            reply_markup=get_main_keyboard(),
+            parse_mode='Markdown'
         )
         logger.info(f"Завершен чат для пользователя {user_id}")
     else:
@@ -227,7 +277,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     
     # Обработка кнопок клавиатуры
     if message_text == "🎮 Выбрать ассистента":
-        await send_assistant_selection_message(update, context)
+        await send_general_assistant_selection_message(update, context)
         return
     elif message_text == "🛑 Остановить обсуждение":
         await stop_chat(update, context)
@@ -270,7 +320,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             # Разбиваем длинный ответ на части и отправляем их по очереди
             for message_chunk in split_response(response):
                 await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-                await update.message.reply_text(message_chunk, reply_markup=get_main_keyboard())
+                await update.message.reply_text(
+                    message_chunk, 
+                    reply_markup=get_main_keyboard(),
+                    parse_mode='Markdown'
+                )
         else:
             await update.message.reply_text(
                 "❌ Не удалось сформировать ответ. Пожалуйста, попробуйте снова.",
@@ -284,7 +338,25 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             reply_markup=get_main_keyboard()
         )
 
-def split_response(response: str) -> list:
+def clean_markdown_formatting(text: str) -> str:
+    """Очищает и исправляет markdown форматирование для Telegram."""
+    import re
+    
+    # Заменяем двойные звездочки на правильное markdown форматирование
+    text = re.sub(r'\*\*(.*?)\*\*', r'*\1*', text)
+    
+    # Убираем лишние символы форматирования, которые могут не поддерживаться
+    text = re.sub(r'###\s*(.*?)(?=\n|$)', r'*\1*', text)  # Заголовки третьего уровня
+    text = re.sub(r'##\s*(.*?)(?=\n|$)', r'*\1*', text)   # Заголовки второго уровня
+    text = re.sub(r'#\s*(.*?)(?=\n|$)', r'*\1*', text)    # Заголовки первого уровня
+    
+    # Исправляем списки - убираем лишние символы
+    text = re.sub(r'^\s*[\-\*]\s+', '• ', text, flags=re.MULTILINE)
+    
+    # Убираем тройные или более звездочки
+    text = re.sub(r'\*{3,}', '**', text)
+    
+    return text
     """Разбивает длинный ответ на части, не превышающие максимальную длину сообщения Telegram."""
     if len(response) <= MAX_MESSAGE_LENGTH:
         return [response]
