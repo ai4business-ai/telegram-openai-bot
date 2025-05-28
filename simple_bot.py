@@ -357,7 +357,12 @@ def clean_markdown_formatting(text: str) -> str:
     text = re.sub(r'\*{3,}', '**', text)
     
     return text
+
+def split_response(response: str) -> list:
     """Разбивает длинный ответ на части, не превышающие максимальную длину сообщения Telegram."""
+    # Сначала очищаем markdown форматирование
+    response = clean_markdown_formatting(response)
+    
     if len(response) <= MAX_MESSAGE_LENGTH:
         return [response]
     
@@ -379,7 +384,8 @@ def clean_markdown_formatting(text: str) -> str:
                     else:
                         current_chunk = sentence
                 else:
-                    chunks.append(current_chunk)
+                    if current_chunk:
+                        chunks.append(current_chunk)
                     current_chunk = sentence
         else:
             # Проверяем, поместится ли параграф в текущий фрагмент
@@ -389,7 +395,8 @@ def clean_markdown_formatting(text: str) -> str:
                 else:
                     current_chunk = paragraph
             else:
-                chunks.append(current_chunk)
+                if current_chunk:
+                    chunks.append(current_chunk)
                 current_chunk = paragraph
     
     if current_chunk:
