@@ -74,6 +74,7 @@ def get_assistant_selection_keyboard():
     
     return InlineKeyboardMarkup(keyboard)
 
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Отправка приветственного сообщения по команде /start."""
     help_text = (
