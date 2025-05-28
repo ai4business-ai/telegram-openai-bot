@@ -9,7 +9,8 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo, ReplyKeyboardMarkup, KeyboardButton
-from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo, ReplyKeyboardMarkup, KeyboardButton, InlineQueryResultArticle, InputTextMessageContent
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters, InlineQueryHandler
 from openai import OpenAI
 
 # Загрузка переменных окружения
@@ -136,19 +137,22 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
 
 async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Обработка данных из Mini App."""
+    """Обработка данных из Mini App (только для keyboard button)."""
     try:
         # Получаем данные из Mini App
         web_app_data = update.message.web_app_data.data
         import json
         data = json.loads(web_app_data)
         
-        # Извлекаем выбранного ассистента
+        logger.info(f"Получены данные из Web App: {data}")
+        
+        # Извлекаем выбранного ассистента и источник
         selected_assistant = data.get('selected_assistant')
+        source = data.get('source', 'keyboard')
         
         if selected_assistant and selected_assistant in ASSISTANTS:
-            # Отправляем сообщение конкретно для выбранного ассистента
-            await send_specific_assistant_message(update, context, selected_assistant)
+            # Запускаем ассистента напрямую
+            await start_chat_with_assistant_direct(update, context, selected_assistant)
         else:
             # Fallback - показываем общее меню
             await send_general_assistant_selection_message(update, context)
@@ -157,6 +161,81 @@ async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE
         logger.error(f"Ошибка при обработке данных Web App: {e}")
         # Fallback - показываем общее меню
         await send_general_assistant_selection_message(update, context)
+
+async def start_chat_with_assistant_direct(update: Update, context: ContextTypes.DEFAULT_TYPE, assistant_type: str) -> None:
+    """Прямой запуск ассистента без промежуточного меню (для keyboard button)."""
+    user_id = update.effective_user.id
+    
+    # Завершение существующего чата, если есть
+    if user_id in active_threads:
+        try:
+            _, thread_id, _ = active_threads[user_id]
+            client.beta.threads.delete(thread_id)
+        except Exception as e:
+            logger.error(f"Ошибка при удалении потока: {e}")
+    
+    assistant_id = ASSISTANTS.get(assistant_type)
+    
+    if not assistant_id:
+        await update.message.reply_text(
+            f"❌ Извините, ассистент '{ASSISTANT_NAMES[assistant_type]}' недоступен в данный момент.",
+            reply_markup=get_main_keyboard()
+        )
+        return
+    
+    # Создание нового потока
+    thread = client.beta.threads.create()
+    active_threads[user_id] = (assistant_id, thread.id, assistant_type)
+    
+    await update.message.reply_text(
+        f"✅ *Запущен ассистент: {ASSISTANT_NAMES[assistant_type].replace('📊 ', '').replace('💡 ', '').replace('📝 ', '').replace('🔄 ', '')}*\n\n"
+        f"📝 {ASSISTANT_DESCRIPTIONS[assistant_type]}\n\n"
+        "💬 Теперь можете отправлять мне свои вопросы, и я отвечу!\n\n"
+        "🔄 Используйте кнопку \"Выбрать ассистента\" для смены ассистента\n"
+        "🛑 Используйте кнопку \"Остановить обсуждение\" для завершения",
+        parse_mode='Markdown',
+        reply_markup=get_main_keyboard()
+    )
+    
+    logger.info(f"Прямой запуск ассистента для пользователя {user_id} с ассистентом '{ASSISTANT_NAMES[assistant_type]}' (ID: {assistant_id}) в потоке {thread.id}")
+
+async def handle_inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обработка inline запросов для поддержки menu button."""
+    query = update.inline_query.query
+    
+    # Проверяем, является ли это запросом от Mini App
+    if query.startswith("assistant_selected_"):
+        assistant_type = query.replace("assistant_selected_", "")
+        
+        if assistant_type in ASSISTANTS:
+            # Создаем результат для inline запроса
+            results = [
+                InlineQueryResultArticle(
+                    id=f"select_{assistant_type}",
+                    title=f"Выбрать {ASSISTANT_NAMES[assistant_type]}",
+                    description=ASSISTANT_DESCRIPTIONS[assistant_type],
+                    input_message_content=InputTextMessageContent(
+                        message_text=f"🤖 Выбран ассистент: *{ASSISTANT_NAMES[assistant_type].replace('📊 ', '').replace('💡 ', '').replace('📝 ', '').replace('🔄 ', '')}*\n\n"
+                                   f"📝 {ASSISTANT_DESCRIPTIONS[assistant_type]}\n\n"
+                                   "💬 Нажмите кнопку ниже для начала общения:",
+                        parse_mode='Markdown'
+                    ),
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton(
+                            f"🚀 Запустить {ASSISTANT_NAMES[assistant_type].replace('📊 ', '').replace('💡 ', '').replace('📝 ', '').replace('🔄 ', '')}",
+                            callback_data=f"select_{assistant_type}"
+                        )
+                    ]])
+                )
+            ]
+            
+            await update.inline_query.answer(results, cache_time=1)
+        else:
+            # Пустой результат для неизвестного ассистента
+            await update.inline_query.answer([])
+    else:
+        # Пустой результат для других запросов
+        await update.inline_query.answer([])
 
 async def send_specific_assistant_message(update: Update, context: ContextTypes.DEFAULT_TYPE, assistant_type: str) -> None:
     """Отправка сообщения для конкретного ассистента."""
@@ -496,9 +575,12 @@ def main() -> None:
     # Обработка текстовых сообщений (включая кнопки клавиатуры)
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
-    # Обработка данных из Web App
+    # Обработка данных из Web App (keyboard button)
     application.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_web_app_data))
-    
+
+    # Обработка inline запросов (для menu button поддержки)
+    application.add_handler(InlineQueryHandler(handle_inline_query))
+
     # Обработка нажатий на inline кнопки
     application.add_handler(CallbackQueryHandler(button_callback))
     
