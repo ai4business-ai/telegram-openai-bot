@@ -268,14 +268,16 @@ def register_user(telegram_id: int):
 
 def get_main_keyboard():
     """Создание основной клавиатуры с кнопками управления."""
-    keyboard = [
-    """Клавиатура с кнопкой Mini App."""
-    return ReplyKeyboardMarkup([
-        [KeyboardButton("🎮 Выбрать ассистента", web_app=WebAppInfo(url=MINI_APP_URL))],
-        [KeyboardButton("🛑 Остановить обсуждение")],
-        [KeyboardButton("👤 Профиль")]
+    
+    # Создаем кнопки
+    buttons = [
+        [KeyboardButton("🎮 Выбрать ассистента", web_app=WebAppInfo(url=MINI_APP_URL))],  # кнопка выбора ассистента с веб-приложением
+        [KeyboardButton("🛑 Остановить обсуждение")],  # кнопка остановки обсуждения
+        [KeyboardButton("👤 Профиль")]  # кнопка профиля
     ]
-    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    
+    # Возвращаем разметку клавиатуры
+    return ReplyKeyboardMarkup(buttons, resize_keyboard=True)
 
 def get_assistant_selection_keyboard():
     """Создание inline клавиатуры для выбора ассистента."""
