@@ -7,9 +7,6 @@ import sqlite3
 import hashlib
 import hmac
 from typing import Dict, Any, Tuple, Optional
-import json
-from typing import Dict, Tuple
-from signal import signal, SIGINT, SIGTERM
 from threading import Thread
 import time
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -20,22 +17,6 @@ from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo, ReplyKeyboardMarkup, KeyboardButton
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo, ReplyKeyboardMarkup, KeyboardButton, InlineQueryResultArticle, InputTextMessageContent
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters, InlineQueryHandler
-from telegram import (
-    Update,
-    KeyboardButton,
-    ReplyKeyboardMarkup,
-    WebAppInfo,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup
-)
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    MessageHandler,
-    CallbackQueryHandler,
-    ContextTypes,
-    filters
-)
 from openai import OpenAI
 
 # Загрузка переменных окружения
@@ -43,8 +24,7 @@ load_dotenv()
 
 # Настройка логирования
 logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
@@ -55,18 +35,12 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 MAX_MESSAGE_LENGTH = 4096
 
 # URL Mini App для выбора ассистента
-# Константы
 MINI_APP_URL = "https://ai4business-ai.github.io/front-bot-repo/"
-MAX_MESSAGE_LENGTH = 4096
-DATABASE_NAME = "users.db"
 
 # Хранение активных разговоров: user_id -> (assistant_id, thread_id, assistant_type)
 active_threads: Dict[int, Tuple[str, str, str]] = {}
-# Инициализация клиента OpenAI
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # ID ассистентов из переменных окружения
-# ID ассистентов
 ASSISTANTS = {
     "market": os.getenv("OPENAI_ASSISTANT_ID_MARKET"),
     "founder": os.getenv("OPENAI_ASSISTANT_ID_FOUNDER"),
@@ -78,7 +52,6 @@ ASSISTANTS = {
 ASSISTANT_NAMES = {
     "market": "📊 Анализ рынка",
     "founder": "💡 Идеи фаундера",
-    "founder": "💡 Идеи фаундера", 
     "business": "📝 Бизнес-модель",
     "adapter": "🔄 Адаптатор идей"
 }
@@ -90,9 +63,6 @@ ASSISTANT_DESCRIPTIONS = {
     "business": "Помогает составить и проанализировать бизнес-модель",
     "adapter": "Помогает адаптировать успешные идеи из различных кейсов для вашего бизнеса"
 }
-# Глобальные переменные
-active_threads: Dict[int, Tuple[str, str, str]] = {}
-application = None  # Глобальная переменная для экземпляра Application
 
 # Инициализация базы данных
 def init_database():
@@ -115,16 +85,6 @@ def init_database():
 
     conn.commit()
     conn.close()
-class HealthCheckHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        if self.path == '/health':
-            self.send_response(200)
-            self.send_header('Content-type', 'text/plain')
-            self.end_headers()
-            self.wfile.write(b'OK')
-        else:
-            self.send_response(404)
-            self.end_headers()
 
 def add_or_update_user(telegram_id: int, username: str = None, first_name: str = None, last_name: str = None, status: str = 'user'):
     """Добавляет или обновляет пользователя в базе данных."""
@@ -151,11 +111,6 @@ def add_or_update_user(telegram_id: int, username: str = None, first_name: str =
 
     conn.commit()
     conn.close()
-def run_health_server(port=8080):
-    """Запуск HTTP сервера для health checks"""
-    server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
-    logger.info(f"Health check server running on port {port}")
-    server.serve_forever()
 
 def register_user(telegram_id: int):
     """Регистрирует пользователя (меняет статус на 'registered')."""
@@ -170,31 +125,6 @@ def register_user(telegram_id: int):
 
     conn.commit()
     conn.close()
-def init_database():
-    """Инициализация базы данных."""
-    with sqlite3.connect(DATABASE_NAME) as conn:
-        conn.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            telegram_id INTEGER PRIMARY KEY,
-            username TEXT,
-            first_name TEXT,
-            last_name TEXT,
-            status TEXT DEFAULT 'user',
-            registered_at TIMESTAMP,
-            last_activity TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-        ''')
-        conn.commit()
-
-def add_or_update_user(telegram_id: int, username: str = None, first_name: str = None, last_name: str = None):
-    """Добавление или обновление пользователя."""
-    with sqlite3.connect(DATABASE_NAME) as conn:
-        conn.execute('''
-        INSERT OR REPLACE INTO users 
-        (telegram_id, username, first_name, last_name, last_activity)
-        VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-        ''', (telegram_id, username, first_name, last_name))
-        conn.commit()
 
 def get_user_status(telegram_id: int) -> str:
     """Получает статус пользователя."""
@@ -207,11 +137,6 @@ def get_user_status(telegram_id: int) -> str:
     conn.close()
 
     return result[0] if result else 'new'
-    """Получение статуса пользователя."""
-    with sqlite3.connect(DATABASE_NAME) as conn:
-        cursor = conn.execute('SELECT status FROM users WHERE telegram_id = ?', (telegram_id,))
-        result = cursor.fetchone()
-        return result[0] if result else 'new'
 
 def validate_telegram_data(init_data: str, bot_token: str) -> Optional[dict]:
     """Валидирует данные, полученные от Telegram WebApp."""
@@ -255,27 +180,16 @@ def validate_telegram_data(init_data: str, bot_token: str) -> Optional[dict]:
     except Exception as e:
         logger.error(f"Ошибка валидации данных Telegram: {e}")
         return None
-def register_user(telegram_id: int):
-    """Регистрация пользователя."""
-    with sqlite3.connect(DATABASE_NAME) as conn:
-        conn.execute('''
-        UPDATE users 
-        SET status = 'registered', registered_at = CURRENT_TIMESTAMP
-        WHERE telegram_id = ?
-        ''', (telegram_id,))
-        conn.commit()
 
 def get_main_keyboard():
     """Создание основной клавиатуры с кнопками управления."""
-    
-    # Создаем кнопки
-    buttons = [
-        [KeyboardButton("🎮 Выбрать ассистента", web_app=WebAppInfo(url=MINI_APP_URL))],  # кнопка выбора ассистента с веб-приложением
-        [KeyboardButton("🛑 Остановить обсуждение")],  # кнопка остановки обсуждения
-        [KeyboardButton("👤 Профиль")]]  # кнопка профиля
-    
-    # Возвращаем разметку клавиатуры
-    return ReplyKeyboardMarkup(buttons, resize_keyboard=True)
+    keyboard = [
+        [KeyboardButton("🎮 Выбрать ассистента", web_app=WebAppInfo(url=MINI_APP_URL))],
+        [KeyboardButton("🎮 Выбрать ассистента", web_app="https://ai4business-ai.github.io/front-bot-repo/"))],
+        [KeyboardButton("🛑 Остановить обсуждение")],
+        [KeyboardButton("👤 Профиль")]
+    ]
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 def get_assistant_selection_keyboard():
     """Создание inline клавиатуры для выбора ассистента."""
@@ -287,21 +201,14 @@ def get_assistant_selection_keyboard():
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Отправка приветственного сообщения по команде /start."""
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка команды /start."""
     user = update.effective_user
-    add_or_update_user(user.id, user.username, user.first_name, user.last_name)
 
     # Добавляем пользователя в базу данных
     add_or_update_user(
         telegram_id=user.id,
         username=user.username,
         first_name=user.first_name,
-        last_name=user.last_name)
-    text = (
-        f"👋 Привет, {user.first_name}!\n\n"
-        "🤖 Я бот с бизнес-ассистентами на базе ИИ.\n\n"
-        "🎮 Используй кнопку ниже, чтобы выбрать ассистента:"
+        last_name=user.last_name
     )
 
     user_status = get_user_status(user.id)
@@ -431,16 +338,13 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             "🎮 Нажмите кнопку \"Выбрать ассистента\" для начала.",
             reply_markup=get_main_keyboard()
         )
-    await update.message.reply_text(text, reply_markup=get_main_keyboard())
 
 async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка данных из Mini App."""
     try:
         # Получаем данные из Mini App
         web_app_data = update.message.web_app_data.data
         data = json.loads(web_app_data)
-        data = json.loads(update.message.web_app_data.data)
 
         logger.info(f"Получены данные из Web App: {data}")
 
@@ -452,14 +356,11 @@ async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE
             user_id = update.effective_user.id
             register_user(user_id)
 
-        if data.get('action') == 'register_user':
-            register_user(update.effective_user.id)
             await update.message.reply_text(
                 "✅ **Регистрация завершена!**\n\n"
                 "🎉 Теперь вы можете пользоваться всеми функциями бота!\n"
                 "🎮 Выберите ассистента для начала общения.",
                 parse_mode='Markdown',
-                "✅ Регистрация завершена!",
                 reply_markup=get_main_keyboard()
             )
 
@@ -486,12 +387,6 @@ async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE
         else:
             # Неизвестное действие
             await send_general_assistant_selection_message(update, context)
-        elif data.get('action') == 'select_assistant':
-            await start_assistant(
-                update, 
-                context, 
-                data.get('assistant_type')
-            )
 
     except Exception as e:
         logger.error(f"Ошибка при обработке данных Web App: {e}")
@@ -504,38 +399,28 @@ async def start_chat_with_assistant_direct(update: Update, context: ContextTypes
     # Проверяем статус регистрации
     user_status = get_user_status(user_id)
     if user_status != 'registered':
-        logger.error(f"WebApp error: {e}")
         await update.message.reply_text(
             "❌ **Необходима регистрация**\n\n"
             "Для использования ассистентов необходимо пройти регистрацию.\n"
             "Нажмите кнопку \"Выбрать ассистента\" и пройдите быструю регистрацию.",
             parse_mode='Markdown',
-            "❌ Ошибка обработки запроса",
             reply_markup=get_main_keyboard()
         )
         return
 
-async def start_assistant(update: Update, context: ContextTypes.DEFAULT_TYPE, assistant_type: str):
-    """Запуск ассистента."""
-    user_id = update.effective_user.id
-
     # Завершение существующего чата, если есть
     if user_id in active_threads:
-        _, thread_id, _ = active_threads[user_id]
         try:
             _, thread_id, _ = active_threads[user_id]
             client.beta.threads.delete(thread_id)
         except Exception as e:
             logger.error(f"Ошибка при удалении потока: {e}")
-        except Exception:
-            pass
 
     assistant_id = ASSISTANTS.get(assistant_type)
 
     if not assistant_id:
         await update.message.reply_text(
             f"❌ Извините, ассистент '{ASSISTANT_NAMES[assistant_type]}' недоступен в данный момент.",
-            "❌ Ассистент недоступен",
             reply_markup=get_main_keyboard()
         )
         return
@@ -551,8 +436,6 @@ async def start_assistant(update: Update, context: ContextTypes.DEFAULT_TYPE, as
         "🔄 Используйте кнопку \"Выбрать ассистента\" для смены ассистента\n"
         "🛑 Используйте кнопку \"Остановить обсуждение\" для завершения",
         parse_mode='Markdown',
-        f"✅ Выбран ассистент: {ASSISTANT_NAMES[assistant_type]}\n\n"
-        "💬 Теперь можете задавать вопросы",
         reply_markup=get_main_keyboard()
     )
 
@@ -702,10 +585,7 @@ async def start_chat_with_type(update: Update, context: ContextTypes.DEFAULT_TYP
 
 async def stop_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Завершение текущего разговора с ассистентом."""
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка текстовых сообщений."""
     user_id = update.effective_user.id
-    text = update.message.text
 
     if user_id in active_threads:
         _, thread_id, assistant_type = active_threads[user_id]
@@ -717,7 +597,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         del active_threads[user_id]
 
-    if text == "🎮 Выбрать ассистента":
         await update.message.reply_text(
             f"👋 Разговор с ассистентом *{ASSISTANT_NAMES[assistant_type].replace('📊 ', '').replace('💡 ', '').replace('📝 ', '').replace('🔄 ', '')}* завершен.\n\n"
             "🎮 Вы всегда можете начать новое общение, нажав кнопку \"Выбрать ассистента\"",
@@ -729,7 +608,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "❌ У вас нет активного разговора.\n\n"
             "🎮 Нажмите кнопку \"Выбрать ассистента\" для начала нового общения.",
-            "Откройте Mini App для выбора ассистента:",
             reply_markup=get_main_keyboard()
         )
 
@@ -761,62 +639,37 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 reply_markup=get_main_keyboard()
             )
         else:
-
-    if text == "🛑 Остановить обсуждение":
-        if user_id in active_threads:
-            del active_threads[user_id]
             await update.message.reply_text(
                 "❌ У вас нет активного разговора с ассистентом.\n\n"
                 "🎮 Нажмите кнопку \"Выбрать ассистента\" для начала общения.",
-                "🗑️ Диалог завершен",
                 reply_markup=get_main_keyboard()
             )
         return
 
     # Получение информации об активном ассистенте
     assistant_id, thread_id, assistant_type = active_threads[user_id]
-    if user_id not in active_threads:
-        await update.message.reply_text(
-            "❌ Сначала выберите ассистента",
-            reply_markup=get_main_keyboard()
-        )
-        return
-
-    await process_assistant_response(update, context)
-
-async def process_assistant_response(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка запроса к ассистенту."""
-    user_id = update.effective_user.id
-    assistant_id, thread_id, _ = active_threads[user_id]
 
     # Отправка действия "набирает текст"
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-    await context.bot.send_chat_action(user_id, "typing")
 
     try:
         # Добавление сообщения пользователя в поток
-        # Добавление сообщения в thread
         client.beta.threads.messages.create(
             thread_id=thread_id,
             role="user",
             content=message_text
-            content=update.message.text
         )
 
         # Запуск ассистента в потоке
-        # Запуск ассистента
         run = client.beta.threads.runs.create(
             thread_id=thread_id,
             assistant_id=assistant_id,
-            assistant_id=assistant_id
         )
 
         # Ожидание ответа
         response = await poll_run(thread_id, run.id)
-        response = await wait_for_assistant_response(thread_id, run.id)
 
         # Отправка ответа ассистента
-        # Отправка ответа
         if response:
             for message_chunk in split_response(response):
                 await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
@@ -828,16 +681,13 @@ async def process_assistant_response(update: Update, context: ContextTypes.DEFAU
         else:
             await update.message.reply_text(
                 "❌ Не удалось сформировать ответ. Пожалуйста, попробуйте снова.",
-                response[:MAX_MESSAGE_LENGTH],
                 reply_markup=get_main_keyboard()
             )
 
     except Exception as e:
         logger.error(f"Ошибка в разговоре: {e}")
-        logger.error(f"Assistant error: {e}")
         await update.message.reply_text(
             "❌ Извините, возникла ошибка при обработке вашего запроса. Пожалуйста, попробуйте еще раз.",
-            "❌ Ошибка обработки запроса",
             reply_markup=get_main_keyboard()
         )
 
@@ -899,13 +749,11 @@ async def poll_run(thread_id: str, run_id: str) -> str:
     """Ожидание завершения выполнения и возврат ответа ассистента."""
     max_attempts = 60
     for _ in range(max_attempts):
-async def wait_for_assistant_response(thread_id: str, run_id: str) -> str:
-    """Ожидание ответа ассистента."""
-    for _ in range(30):  # 30 попыток с интервалом 1 сек
         await asyncio.sleep(1)
 
         run = client.beta.threads.runs.retrieve(
-@@ -756,163 +277,55 @@ async def poll_run(thread_id: str, run_id: str) -> str:
+            thread_id=thread_id,
+            run_id=run_id
         )
 
         if run.status == "completed":
@@ -923,19 +771,12 @@ async def wait_for_assistant_response(thread_id: str, run_id: str) -> str:
                     return content
 
             return "Нет ответа от ассистента."
-            messages = client.beta.threads.messages.list(thread_id)
-            for msg in messages.data:
-                if msg.role == "assistant":
-                    return msg.content[0].text.value
 
         if run.status in ["failed", "cancelled", "expired"]:
             logger.error(f"Выполнение завершилось со статусом: {run.status}")
             return "Извините, я не смог выполнить запрос."
-        if run.status in ["failed", "cancelled"]:
-            return "❌ Ошибка обработки запроса"
 
     return "Ответ занимает слишком много времени. Пожалуйста, попробуйте позже."
-    return "⏳ Ответ занимает больше времени, чем ожидалось"
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Обработка нажатий на inline кнопки."""
@@ -947,12 +788,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
         if assistant_type in ASSISTANTS:
             await start_chat_with_type(update, context, assistant_type)
-def shutdown_handler(signum, frame):
-    """Обработчик сигналов завершения работы."""
-    logger.info("Получен сигнал завершения...")
-    if application:
-        application.stop()
-    exit(0)
 
 # HTTP сервер для API и health check
 class APIHandler(BaseHTTPRequestHandler):
@@ -965,9 +800,6 @@ class APIHandler(BaseHTTPRequestHandler):
         else:
             self.send_response(404)
             self.end_headers()
-def main():
-    """Основная функция запуска бота."""
-    global application
 
     def do_POST(self):
         if self.path == '/api/register':
@@ -1034,15 +866,11 @@ def run_api_server(port):
 def main() -> None:
     """Запуск бота."""
     # Инициализация базы данных
-    # Инициализация БД
     init_database()
 
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     if not token:
         logger.error("Переменная окружения TELEGRAM_BOT_TOKEN не установлена!")
-    # Проверка токена
-    if not (token := os.getenv("TELEGRAM_BOT_TOKEN")):
-        logger.error("Токен бота не найден!")
         return
 
     missing_assistants = [name for name, aid in ASSISTANTS.items() if not aid]
@@ -1050,16 +878,10 @@ def main() -> None:
         logger.error(f"Не указаны ID для ассистентов: {missing_assistants}")
         logger.error("Проверьте переменные окружения OPENAI_ASSISTANT_ID_*")
         return
-    # Запуск health check сервера в отдельном потоке
-    port = int(os.getenv("PORT", 8080))
-    health_thread = Thread(target=run_health_server, args=(port,), daemon=True)
-    health_thread.start()
 
-    # Создание приложения Telegram бота
     application = Application.builder().token(token).build()
 
     # Добавление обработчиков
-    # Регистрация обработчиков
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("status", status_command))
@@ -1070,9 +892,6 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(button_callback))
 
     logger.info("Запуск бота")
-    # Регистрация обработчиков сигналов
-    signal(SIGINT, shutdown_handler)
-    signal(SIGTERM, shutdown_handler)
 
     port = os.environ.get("PORT")
     if port:
@@ -1095,9 +914,6 @@ def main() -> None:
             logger.error(f"Ошибка при запуске polling: {e}")
             logger.info("Пытаемся запустить без drop_pending_updates")
             application.run_polling()
-    # Запуск бота
-    logger.info("Бот запущен")
-    application.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
     main()
