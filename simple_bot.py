@@ -297,7 +297,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         telegram_id=user.id,
         username=user.username,
         first_name=user.first_name,
-        last_name=user.last_name
+        last_name=user.last_name)
     text = (
         f"👋 Привет, {user.first_name}!\n\n"
         "🤖 Я бот с бизнес-ассистентами на базе ИИ.\n\n"
