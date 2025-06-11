@@ -285,7 +285,6 @@ def get_assistant_selection_keyboard():
         keyboard.append([InlineKeyboardButton(name, callback_data=f"select_{assistant_type}")])
 
     return InlineKeyboardMarkup(keyboard)
-    ], resize_keyboard=True)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Отправка приветственного сообщения по команде /start."""
