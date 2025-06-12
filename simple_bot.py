@@ -343,13 +343,15 @@ async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE
     try:
         # Получаем данные из Mini App
         web_app_data = update.message.web_app_data.data
+        logger.info(f"Raw Web App data: {web_app_data}")
+        
         data = json.loads(web_app_data)
-
-        logger.info(f"Получены данные из Web App: {data}")
+        logger.info(f"Parsed Web App data: {data}")
 
         # Проверяем тип действия
         action = data.get('action')
-
+        
+        # Добавляем обработку всех возможных случаев
         if action == 'register_user':
             # Обработка регистрации пользователя
             user_id = update.effective_user.id
@@ -363,9 +365,11 @@ async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE
                 reply_markup=get_main_keyboard()
             )
 
-        elif action == 'show_specific_assistant':
+        elif action == 'select_assistant':
             # Обработка выбора ассистента
-            selected_assistant = data.get('selected_assistant')
+            selected_assistant = data.get('assistant_type') or data.get('selected_assistant')
+            
+            logger.info(f"Selected assistant: {selected_assistant}")
 
             # Проверяем статус регистрации
             user_status = get_user_status(update.effective_user.id)
@@ -383,13 +387,91 @@ async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE
                 await start_chat_with_assistant_direct(update, context, selected_assistant)
             else:
                 await send_general_assistant_selection_message(update, context)
-        else:
-            # Неизвестное действие
-            await send_general_assistant_selection_message(update, context)
+        
+        elif action == 'show_specific_assistant':
+            # Обработка выбора ассистента (альтернативное название действия)
+            selected_assistant = data.get('selected_assistant') or data.get('assistant_type')
 
+            # Проверяем статус регистрации
+            user_status = get_user_status(update.effective_user.id)
+            if user_status != 'registered':
+                await update.message.reply_text(
+                    "❌ **Необходима регистрация**\n\n"
+                    "Для использования ассистентов необходимо пройти регистрацию.\n"
+                    "Нажмите кнопку \"Выбрать ассистента\" и пройдите быструю регистрацию.",
+                    parse_mode='Markdown',
+                    reply_markup=get_main_keyboard()
+                )
+                return
+
+            if selected_assistant and selected_assistant in ASSISTANTS:
+                await start_chat_with_assistant_direct(update, context, selected_assistant)
+            else:
+                await send_general_assistant_selection_message(update, context)
+        
+        else:
+            # Если action не распознан, проверяем есть ли прямое указание ассистента
+            selected_assistant = data.get('assistant_type') or data.get('selected_assistant')
+            
+            if selected_assistant and selected_assistant in ASSISTANTS:
+                # Проверяем статус регистрации
+                user_status = get_user_status(update.effective_user.id)
+                if user_status != 'registered':
+                    await update.message.reply_text(
+                        "❌ **Необходима регистрация**\n\n"
+                        "Для использования ассистентов необходимо пройти регистрацию.\n"
+                        "Нажмите кнопку \"Выбрать ассистента\" и пройдите быструю регистрацию.",
+                        parse_mode='Markdown',
+                        reply_markup=get_main_keyboard()
+                    )
+                    return
+                
+                await start_chat_with_assistant_direct(update, context, selected_assistant)
+            else:
+                # Неизвестное действие - показываем выбор ассистентов
+                logger.warning(f"Unknown action or data structure: {data}")
+                await send_general_assistant_selection_message(update, context)
+
+    except json.JSONDecodeError as e:
+        logger.error(f"Ошибка парсинга JSON из Web App: {e}")
+        logger.error(f"Raw data: {update.message.web_app_data.data}")
+        await update.message.reply_text(
+            "❌ Ошибка обработки данных приложения. Попробуйте еще раз.",
+            reply_markup=get_main_keyboard()
+        )
     except Exception as e:
         logger.error(f"Ошибка при обработке данных Web App: {e}")
+        logger.error(f"Data: {update.message.web_app_data.data}")
         await send_general_assistant_selection_message(update, context)
+
+# Также добавьте функцию для дебага данных из Mini App
+async def debug_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Отладочная функция для анализа данных Web App."""
+    if update.message and update.message.web_app_data:
+        raw_data = update.message.web_app_data.data
+        logger.info(f"=== WEB APP DEBUG ===")
+        logger.info(f"Raw data: {raw_data}")
+        logger.info(f"Data length: {len(raw_data)}")
+        
+        try:
+            parsed = json.loads(raw_data)
+            logger.info(f"Parsed data: {json.dumps(parsed, indent=2, ensure_ascii=False)}")
+            logger.info(f"Available keys: {list(parsed.keys())}")
+        except:
+            logger.info("Failed to parse as JSON")
+        
+        logger.info(f"=== END DEBUG ===")
+
+# Обновленная функция для обработки сообщений с дебагом
+async def handle_message_with_debug(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обработка входящих сообщений от пользователя с дебагом Web App."""
+    
+    # Если это данные из Web App, сначала отлаживаем их
+    if update.message and update.message.web_app_data:
+        await debug_web_app_data(update, context)
+    
+    # Затем вызываем основную функцию обработки
+    await handle_message(update, context)
 
 async def start_chat_with_assistant_direct(update: Update, context: ContextTypes.DEFAULT_TYPE, assistant_type: str) -> None:
     """Прямой запуск ассистента без промежуточного меню (для keyboard button)."""
