@@ -185,7 +185,6 @@ def get_main_keyboard():
     """Создание основной клавиатуры с кнопками управления."""
     keyboard = [
         [KeyboardButton("🎮 Выбрать ассистента", web_app=WebAppInfo(url=MINI_APP_URL))],
-        [KeyboardButton("🎮 Выбрать ассистента", web_app="https://ai4business-ai.github.io/front-bot-repo/"))],
         [KeyboardButton("🛑 Остановить обсуждение")],
         [KeyboardButton("👤 Профиль")]
     ]
